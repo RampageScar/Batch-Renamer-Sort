@@ -2,10 +2,10 @@
 Batch File Renamer
 ------------------
 Pick a folder, tick the files (or folders) you want, remove or replace words in the names
-(at the start, at the end, anywhere, or as a whole word), or number them in order
-(1.png, 2.png ... or notes_1.png, notes_2.png ...), add a prefix and/or
-suffix, optionally move the renamed files into a new folder, and undo runs from
-the log.  (To sort files into folders by word, use sorter.py.)
+(at the start, at the end, anywhere, or as a whole word), add text at the start or end
+(a Start/End rule with an empty Find box), or number them in order (1.png, 2.png ...
+or notes_1.png, notes_2.png ...), optionally move the renamed files into a new
+folder, and undo runs from the log.  (To sort files into folders by word, use sorter.py.)
 
 Numbering follows the list from top to bottom. The list starts in natural order
 (a2 before a10); drag a name up or down to change the order.
@@ -37,43 +37,62 @@ LOG_NAME = ".renamer_last_run.json"
 # ----------------------------------------------------------------------------
 # Core logic (no GUI)
 # ----------------------------------------------------------------------------
+ITEM_CHOICES = ("Files", "Folders", "Both")
+WHERE_CHOICES = ("Anywhere", "Start", "End", "Whole word")
+SEPARATORS = " _-"
+_SEP = re.escape(SEPARATORS)
+SIZE_RE = re.compile(rf"[{_SEP}]*\d+\s*[xX]\s*\d+$")   # e.g. _384x256 at the end
+DOUBLE_SEP = re.compile(rf"([{_SEP}])\1+")             # "__", "--", "  "
+_WORD_START = rf"(?<![^{_SEP}])"    # start of name or just after a separator
+_WORD_END = rf"(?![^{_SEP}])"       # end of name or just before a separator
+
+
 def _natural_key(name):
     """Sort key so that file2 comes before file10."""
     return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", name)]
 
 
+def _now():
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _split_name(name, is_dir=False):
+    """(stem, extension). A folder name is one whole name: "Bandit v1.2" has no extension."""
+    return (name, "") if is_dir else os.path.splitext(name)
+
+
+def _matches(name, pats):
+    return any(fnmatch.fnmatch(name.lower(), p) for p in pats)
+
+
 def list_files(folder, patterns, kind="Files"):
     """
     Items directly inside `folder` (nothing from deeper levels) that match the
-    comma-separated patterns, in natural order (a2 before a10). kind is "Files",
-    "Folders" or "Both". With "Both" the patterns apply to files only and every
+    comma-separated patterns, in natural order (a2 before a10). kind is one of
+    ITEM_CHOICES. With "Both" the patterns apply to files only and every
     (visible) folder is listed.
     """
     pats = [p.strip().lower() for p in patterns.split(",") if p.strip()] or ["*"]
-    out = []
+    # a bare extension such as ".mp4" means "*.mp4"
+    pats = ["*" + p if p.startswith(".") and not any(c in p for c in "*?[") else p
+            for p in pats]
     try:
         names = sorted(os.listdir(folder), key=_natural_key)
     except OSError:
-        return out
+        return []
+    out = []
     for name in names:
         if name == LOG_NAME:
             continue
         path = os.path.join(folder, name)
         if os.path.isdir(path):
-            if kind == "Files" or name.startswith("."):
-                continue
-            if kind == "Both" or any(fnmatch.fnmatch(name.lower(), p) for p in pats):
-                out.append(name)
-            continue
-        if kind == "Folders" or not os.path.isfile(path):
-            continue
-        if any(fnmatch.fnmatch(name.lower(), p) for p in pats):
+            ok = (kind != "Files" and not name.startswith(".")
+                  and (kind == "Both" or _matches(name, pats)))
+        else:
+            ok = kind != "Folders" and os.path.isfile(path) and _matches(name, pats)
+        if ok:
             out.append(name)
     return out
-
-
-SIZE_RE = re.compile(r"[\s_\-]*\d+\s*[xX]\s*\d+$")   # e.g. _384x256 at the end
-SEPARATORS = " _-"
 
 
 def _split_list(text):
@@ -82,50 +101,54 @@ def _split_list(text):
     return sorted(items, key=len, reverse=True)
 
 
-WHERE_CHOICES = ("Anywhere", "Start", "End", "Whole word")
-DOUBLE_SEP = re.compile(r"([ _\-])\1+")     # "__", "--", "  "
-_WORD_START = r"(?<![^_\-\s])"              # start of name or just after _ - space
-_WORD_END = r"(?![^_\-\s])"                 # end of name or just before _ - space
+def is_add_rule(rule):
+    """A rule with an empty Find box adds text (at the Start or End) instead of removing it."""
+    return not rule[1].strip()
 
 
 def apply_rule(stem, where, find, replace):
     """
-    Apply one remove/replace rule to `stem` (case-insensitive).
-    `find` may hold several options separated by commas.
+    Apply one rule to `stem` (case-insensitive). `find` may hold several options
+    separated by commas.
       Start / End : the first option that matches is replaced
       Anywhere    : every occurrence of every option is replaced
       Whole word  : like Anywhere, but only when it is a separate word
                     (between _ - space or the ends of the name)
-    An empty `replace` removes the text.
+    An empty `replace` removes the text. With an empty `find`, Start puts
+    `replace` in front of the name and End puts it after (other modes do nothing).
     """
-    for item in _split_list(find):
-        low, it = stem.lower(), item.lower()
+    if not find.strip():
         if where == "Start":
-            if low.startswith(it):
-                stem = replace + stem[len(item):]
-                break
+            return replace + stem
+        return stem + replace if where == "End" else stem
+    low = stem.lower()
+    for item in _split_list(find):
+        if where == "Start":
+            if low.startswith(item.lower()):
+                return replace + stem[len(item):]
         elif where == "End":
-            if low.endswith(it):
-                stem = stem[:len(stem) - len(item)] + replace
-                break
-        elif where == "Whole word":
-            stem = re.sub(_WORD_START + re.escape(item) + _WORD_END,
-                          lambda m: replace, stem, flags=re.IGNORECASE)
-        else:  # Anywhere
-            stem = re.sub(re.escape(item), lambda m: replace, stem, flags=re.IGNORECASE)
+            if low.endswith(item.lower()):
+                return stem[:len(stem) - len(item)] + replace
+        else:   # Anywhere / Whole word
+            pattern = re.escape(item)
+            if where == "Whole word":
+                pattern = _WORD_START + pattern + _WORD_END
+            stem = re.sub(pattern, lambda m: replace, stem, flags=re.IGNORECASE)
     return stem
 
 
 def remove_parts(stem, rules=(), strip_size=False):
     """
-    Apply the size removal (if ticked) and then every rule, top to bottom.
+    Apply the size removal (if ticked) and then every remove/replace rule, top to
+    bottom (rules that only add text are left to build_name).
     `rules` is a list of (where, find, replace). Returns (new_stem, changed).
     """
     original = stem
     if strip_size:
         stem = SIZE_RE.sub("", stem)
-    for where, find, replace in rules:
-        stem = apply_rule(stem, where, find, replace)
+    for rule in rules:
+        if not is_add_rule(rule):
+            stem = apply_rule(stem, *rule)
     if stem != original:
         if not DOUBLE_SEP.search(original):
             stem = DOUBLE_SEP.sub(r"\1", stem)   # tidy "__" left behind by a removal
@@ -151,20 +174,19 @@ def apply_capitalise(text, mode="Off"):
     return text
 
 
-def build_name(filename, prefix, suffix, replace_spaces, rules=(), strip_size=False,
+def build_name(filename, replace_spaces, rules=(), strip_size=False,
                capitalise="Off", is_dir=False, number=None):
     """
-    Return (new_name, already_prefixed, removal_skipped).
-    Order: remove/replace words, then replace spaces, then add prefix/suffix,
-    then (optionally) capitalise: first letter only, or every word.
-    removal_skipped is True when the rules would leave an empty name, in which
-    case the original name is kept for that step.
+    Return (new_name, removal_skipped).
+    Order: remove/replace words, then add text (rules with an empty Find box),
+    then replace spaces, then (optionally) capitalise: first letter only, or
+    every word. removal_skipped is True when the removal rules would leave an
+    empty name, in which case the original name is kept for that step.
     If `number` (a string such as "7") is given, it replaces the whole name
-    (the remove/replace rules are not used); prefix/suffix still get added,
-    e.g. prefix "notes" + number "7" -> notes_7.png
+    (the removal rules and size removal are not used); add-text rules still
+    apply, e.g. a Start rule adding "notes_" + number "7" -> notes_7.png
     """
-    # a folder name is one whole name: "Bandit v1.2" has no extension
-    stem, ext = (filename, "") if is_dir else os.path.splitext(filename)
+    stem, ext = _split_name(filename, is_dir)
     removal_skipped = False
     if number is not None:
         stem = number
@@ -175,18 +197,12 @@ def build_name(filename, prefix, suffix, replace_spaces, rules=(), strip_size=Fa
                 stem = cut
             else:
                 removal_skipped = True
-    prefix, suffix = prefix.strip(), suffix.strip()
-    joiner = " "
+    for rule in rules:
+        if is_add_rule(rule):
+            stem = apply_rule(stem, *rule)
     if replace_spaces:
-        joiner = "_"
-        stem = stem.replace(" ", joiner)
-        prefix = prefix.replace(" ", joiner)
-        suffix = suffix.replace(" ", joiner)
-    already = bool(prefix) and stem.lower().startswith(prefix.lower() + joiner)
-    parts = [p for p in (prefix, stem, suffix) if p]
-    new_stem = joiner.join(parts)
-    new_stem = apply_capitalise(new_stem, capitalise)
-    return new_stem + ext, already, removal_skipped
+        stem = stem.replace(" ", "_")
+    return apply_capitalise(stem, capitalise) + ext, removal_skipped
 
 
 def _is_own_name(src, dst):
@@ -219,36 +235,31 @@ def _move_pairs(pairs, done):
             done.append((src, dst))
         return
     tag = datetime.now().strftime("%H%M%S%f")
-    staged = []                      # (src, temp, dst)
+    staged = []                      # (src, temp, dst) still sitting under a temporary name
     try:
         for i, (src, dst) in enumerate(pairs):
             temp = os.path.join(os.path.dirname(src), f".renamer_tmp_{tag}_{i}")
             shutil.move(src, temp)
             staged.append((src, temp, dst))
-    except Exception:
-        for src, temp, _ in reversed(staged):   # put everything back
-            shutil.move(temp, src)
-        raise
-    pending = list(staged)
-    try:
-        while pending:
-            src, temp, dst = pending[0]
+        while staged:
+            src, temp, dst = staged[0]
             shutil.move(temp, dst)
             done.append((src, dst))
-            pending.pop(0)
+            staged.pop(0)
     except Exception:
-        for src, temp, _ in pending:            # restore what was not finished
+        for src, temp, _ in reversed(staged):   # put back whatever was not finished
             if os.path.exists(temp):
                 shutil.move(temp, src)
         raise
 
 
-def plan_renames(folder, selected, prefix, suffix, replace_spaces, move_folder=None,
+def plan_renames(folder, selected, replace_spaces, move_folder=None,
                  rules=(), strip_size=False, capitalise="Off",
                  numbering=False, start=1, pad=0, keep_order=False):
     """
     Build the rename plan for the selected filenames.
-    Returns a list of dicts: src, dst, name, numbered (bool), already_prefixed (bool).
+    Returns a list of dicts: src, dst, name, is_dir, numbered (a clash number was
+    added), removal_skipped, unchanged.
     Name clashes (with files on disk or within this batch) get _1, _2, ...
     With numbering=True the selected items are called start, start+1, ...
     (zero-padded to `pad` digits), in the order given if keep_order is True,
@@ -273,14 +284,13 @@ def plan_renames(folder, selected, prefix, suffix, replace_spaces, move_folder=N
         if is_dir and move_folder:
             raise ValueError("Folders can't be moved into a new folder.")
         number = str(start + idx).zfill(pad) if numbering else None
-        new_name, already, skipped = build_name(
-            fname, prefix, suffix, replace_spaces, rules, strip_size, capitalise, is_dir,
-            number)
+        new_name, skipped = build_name(
+            fname, replace_spaces, rules, strip_size, capitalise, is_dir, number)
         numbered = False
         # a file whose name doesn't change and stays in place is not a clash
         unchanged = (new_name == fname and not move_folder)
         if not unchanged:
-            stem, ext = (new_name, "") if is_dir else os.path.splitext(new_name)
+            stem, ext = _split_name(new_name, is_dir)
             candidate, n = new_name, 0
             while True:
                 low = candidate.lower()
@@ -303,7 +313,6 @@ def plan_renames(folder, selected, prefix, suffix, replace_spaces, move_folder=N
             "name": new_name,
             "is_dir": is_dir,
             "numbered": numbered,
-            "already_prefixed": already,
             "removal_skipped": skipped,
             "unchanged": unchanged,
         })
@@ -352,7 +361,7 @@ def apply_plan(folder, plan, move_folder=None):
             moved_to = {new for _, new in done}
             history.append({
                 "id": max((e.get("id", 0) for e in history), default=0) + 1,
-                "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "time": _now(),
                 "folder": folder,
                 "move_folder": move_folder,
                 "created_dir": created_dir,
@@ -365,17 +374,6 @@ def apply_plan(folder, plan, move_folder=None):
         elif created_dir and os.path.isdir(created_dir) and not os.listdir(created_dir):
             os.rmdir(created_dir)  # nothing moved, don't leave an empty folder
     return done
-
-
-def last_run_id(folder=None):
-    """Id of the newest run that has not been undone (optionally for one folder)."""
-    want = os.path.normcase(os.path.abspath(folder)) if folder else None
-    for entry in reversed(load_history()):
-        if entry.get("undone"):
-            continue
-        if want is None or os.path.normcase(os.path.abspath(entry["folder"])) == want:
-            return entry["id"]
-    return None
 
 
 def undo_run(run_id):
@@ -397,23 +395,27 @@ def undo_run(run_id):
     if created and os.path.isdir(created) and not os.listdir(created):
         os.rmdir(created)
     entry["undone"] = True
-    entry["undone_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    entry["undone_time"] = _now()
     save_history(history)
     return restored
 
 
 def undo_last(folder=None):
     """Undo the newest active run (for `folder` if given). Returns files restored."""
-    run_id = last_run_id(folder)
-    if run_id is None:
-        raise FileNotFoundError("No earlier run to undo.")
-    return undo_run(run_id)
+    want = os.path.normcase(os.path.abspath(folder)) if folder else None
+    for entry in reversed(load_history()):
+        if not entry.get("undone") and (
+                want is None or os.path.normcase(os.path.abspath(entry["folder"])) == want):
+            return undo_run(entry["id"])
+    raise FileNotFoundError("No earlier run to undo for this folder." if folder
+                            else "No earlier run to undo.")
 
 
 # ----------------------------------------------------------------------------
 # GUI
 # ----------------------------------------------------------------------------
 CHECKED, UNCHECKED = "☑", "☐"
+RULE_WIDGETS = ("combo", "find_entry", "arrow", "replace_entry", "remove")
 
 
 class RenamerApp:
@@ -427,9 +429,7 @@ class RenamerApp:
         self.filter = tk.StringVar(value="*.png")
         self.items = tk.StringVar(value="Files")      # Files / Folders / Both
         self.search = tk.StringVar()
-        self.prefix = tk.StringVar()
-        self.suffix = tk.StringVar()
-        self.rules = []        # remove/replace rows, see _add_rule
+        self.rules = []        # remove/replace/add rows, see _add_rule
         self.strip_size = tk.BooleanVar(value=False)
         self.capitalise = tk.StringVar(value="Off")
         self.replace_spaces = tk.BooleanVar(value=True)
@@ -448,9 +448,7 @@ class RenamerApp:
 
         self._build_menu()
         self._build_ui()
-        for var in (self.search, self.prefix, self.suffix):
-            var.trace_add("write", lambda *a: self._on_change())
-        for var in (self.strip_size, self.capitalise, self.replace_spaces,
+        for var in (self.search, self.strip_size, self.capitalise, self.replace_spaces,
                     self.numbering, self.num_start, self.num_pad,
                     self.do_move, self.move_name):
             var.trace_add("write", lambda *a: self._refresh())
@@ -476,7 +474,7 @@ class RenamerApp:
         ttk.Entry(top, textvariable=self.folder).pack(side="left", fill="x", expand=True, padx=6)
         ttk.Button(top, text="Browse", command=self.browse).pack(side="left")
         ttk.Label(top, text="  Items:").pack(side="left")
-        ttk.Combobox(top, textvariable=self.items, values=("Files", "Folders", "Both"),
+        ttk.Combobox(top, textvariable=self.items, values=ITEM_CHOICES,
                      state="readonly", width=8).pack(side="left", padx=4)
         ttk.Label(top, text="  Filter:").pack(side="left")
         flt = ttk.Entry(top, textvariable=self.filter, width=12)
@@ -486,9 +484,12 @@ class RenamerApp:
 
         sel = ttk.Frame(self.root)
         sel.pack(fill="x", **pad)
-        ttk.Button(sel, text="Select all", command=lambda: self.set_all(True)).pack(side="left")
-        ttk.Button(sel, text="Select none", command=lambda: self.set_all(False)).pack(side="left", padx=4)
-        ttk.Button(sel, text="Invert", command=self.invert).pack(side="left")
+        ttk.Button(sel, text="Select all",
+                   command=lambda: self._set_checks(lambda _: True)).pack(side="left")
+        ttk.Button(sel, text="Select none",
+                   command=lambda: self._set_checks(lambda _: False)).pack(side="left", padx=4)
+        ttk.Button(sel, text="Invert",
+                   command=lambda: self._set_checks(lambda on: not on)).pack(side="left")
         ttk.Button(sel, text="Sort A-Z", command=self.sort_natural).pack(side="left", padx=(12, 0))
         ttk.Entry(sel, textvariable=self.search, width=22).pack(side="right")
         ttk.Label(sel, text="Search:").pack(side="right", padx=4)
@@ -521,7 +522,7 @@ class RenamerApp:
         self.tree.tag_configure("drag", background="#dbe9ff")
 
         rem = ttk.LabelFrame(self.root,
-                             text="Remove / replace word (rules run top to bottom, before adding)")
+                             text="Remove / replace / add text (rules run top to bottom)")
         rem.pack(fill="x", **pad)
         self.rules_box = ttk.Frame(rem)
         self.rules_box.pack(fill="x", padx=8, pady=(4, 0))
@@ -535,20 +536,16 @@ class RenamerApp:
         ttk.Button(rbar, text="+ Add rule", command=self._add_rule).pack(side="left")
         ttk.Checkbutton(rbar, text="Also remove a size at the end (like _384x256)",
                         variable=self.strip_size).pack(side="left", padx=16)
-        ttk.Label(rem, text="Tip: put several options in one Find box separated by commas "
-                            "(man_, creature_).").pack(anchor="w", padx=8, pady=(0, 4))
+        ttk.Label(rem, text="Tips: put several options in one Find box separated by commas "
+                            "(man_, creature_).  To add text, leave Find empty and pick "
+                            "Start (prefix) or End (suffix); it is added after the "
+                            "removals and typed exactly as written (e.g. sprite_ or _final).",
+                  wraplength=820, justify="left").pack(anchor="w", padx=8, pady=(0, 4))
 
         opts = ttk.LabelFrame(self.root, text="Rename options")
         opts.pack(fill="x", **pad)
-        row1 = ttk.Frame(opts)
-        row1.pack(fill="x", padx=8, pady=4)
-        ttk.Label(row1, text="Prefix:").pack(side="left")
-        ttk.Entry(row1, textvariable=self.prefix, width=22).pack(side="left", padx=6)
-        ttk.Label(row1, text="Suffix:").pack(side="left", padx=(16, 0))
-        ttk.Entry(row1, textvariable=self.suffix, width=22).pack(side="left", padx=6)
-
         ttk.Checkbutton(opts, text='Replace spaces with "_"',
-                        variable=self.replace_spaces).pack(anchor="w", padx=8)
+                        variable=self.replace_spaces).pack(anchor="w", padx=8, pady=(4, 0))
         crow = ttk.Frame(opts)
         crow.pack(fill="x", padx=8, pady=2)
         ttk.Label(crow, text="Capitalise:").pack(side="left")
@@ -559,7 +556,7 @@ class RenamerApp:
         nrow = ttk.Frame(opts)
         nrow.pack(fill="x", padx=8, pady=2)
         ttk.Checkbutton(nrow, text="Number the ticked items in list order "
-                                   "(replaces the name; prefix/suffix still added)",
+                                   "(replaces the name; add-text rules still apply)",
                         variable=self.numbering).pack(side="left")
         ttk.Label(nrow, text="  Start at:").pack(side="left")
         ttk.Spinbox(nrow, textvariable=self.num_start, from_=0, to=999999,
@@ -567,8 +564,8 @@ class RenamerApp:
         ttk.Label(nrow, text="Digits:").pack(side="left")
         ttk.Spinbox(nrow, textvariable=self.num_pad, from_=0, to=10,
                     width=4).pack(side="left", padx=4)
-        ttk.Label(opts, text="Example: prefix notes -> notes_1.png, notes_2.png ...  "
-                             "No prefix -> 1.png, 2.png ...  Digits 3 -> 001, 002 ...").pack(
+        ttk.Label(opts, text="Example: Start rule adding notes_ -> notes_1.png, notes_2.png ...  "
+                             "No rule -> 1.png, 2.png ...  Digits 3 -> 001, 002 ...").pack(
             anchor="w", padx=28)
         self.move_check = ttk.Checkbutton(opts, text="Move renamed files into a new folder "
                                                      "(files only)",
@@ -612,7 +609,7 @@ class RenamerApp:
     def _remove_rule(self, rule):
         if rule in self.rules:
             self.rules.remove(rule)
-        for key in ("combo", "find_entry", "arrow", "replace_entry", "remove"):
+        for key in RULE_WIDGETS:
             rule[key].destroy()
         self._layout_rules()
         self._refresh()
@@ -626,9 +623,16 @@ class RenamerApp:
             rule["remove"].grid(row=row, column=4, pady=2)
 
     def _rules(self):
-        """(where, find, replace) for every row that has something in Find."""
-        return [(r["where"].get(), r["find"].get(), r["replace"].get())
-                for r in self.rules if r["find"].get().strip()]
+        """(where, find, replace) for every row that has something in Find or Replace."""
+        rows = ((r["where"].get(), r["find"].get(), r["replace"].get()) for r in self.rules)
+        return [row for row in rows if row[1].strip() or row[2]]
+
+    def _default_move_name(self):
+        """The text of the first add-text rule (sprite_ -> sprite), or ''."""
+        for rule in self._rules():
+            if is_add_rule(rule):
+                return rule[2].strip(SEPARATORS)
+        return ""
 
     # ---- actions ---------------------------------------------------------
     def browse(self):
@@ -651,14 +655,10 @@ class RenamerApp:
         q = self.search.get().strip().lower()
         return [f for f in self.files if q in f.lower()]
 
-    def set_all(self, state):
+    def _set_checks(self, new_state):
+        """Set every visible tick box to new_state(current state)."""
         for f in self._visible():
-            self.checked[f] = state
-        self._refresh()
-
-    def invert(self):
-        for f in self._visible():
-            self.checked[f] = not self.checked[f]
+            self.checked[f] = new_state(self.checked[f])
         self._refresh()
 
     def sort_natural(self):
@@ -707,12 +707,6 @@ class RenamerApp:
         self.tree.config(cursor="")
         self._refresh()
 
-    def _on_change(self):
-        # default the move-folder name to prefix (or suffix) until the user edits it
-        if not self.move_name_touched:
-            self.move_name.set(self.prefix.get().strip() or self.suffix.get().strip())
-        self._refresh()
-
     def _on_items_change(self):
         mode = self.items.get()
         flt = self.filter.get().strip()
@@ -741,7 +735,6 @@ class RenamerApp:
     def _plan(self):
         return plan_renames(
             self.folder.get().strip(), self._selected(),
-            self.prefix.get(), self.suffix.get(),
             self.replace_spaces.get(), self._move_folder(),
             rules=self._rules(), strip_size=self.strip_size.get(),
             capitalise=self.capitalise.get(),
@@ -758,6 +751,11 @@ class RenamerApp:
             return default
 
     def _refresh(self):
+        # until the user types their own, the move-folder name follows the added text
+        default = self._default_move_name()
+        if not self.move_name_touched and self.move_name.get() != default:
+            self.move_name.set(default)      # triggers _refresh again, which then does nothing here
+            return
         if not self.files and not self.folder.get():
             return
         plan = {os.path.basename(p["src"]): p for p in self._plan()}
@@ -771,8 +769,6 @@ class RenamerApp:
                 warns = []
                 if p["numbered"]:
                     warns.append("⚠ number added (name clash)")
-                if p["already_prefixed"]:
-                    warns.append("⚠ already has prefix")
                 if p["removal_skipped"]:
                     warns.append("⚠ removal skipped (would leave empty name)")
                 tags = ("warn",) if warns else ()
@@ -793,19 +789,16 @@ class RenamerApp:
         if not selected:
             messagebox.showinfo("Rename", "No files are ticked.")
             return
-        if not self.prefix.get().strip() and not self.suffix.get().strip() \
-                and not self._rules() and not self.strip_size.get() \
-                and self.capitalise.get() == "Off" and not self.numbering.get() \
-                and not self.replace_spaces.get() and not self._move_folder():
-            messagebox.showinfo("Rename", "Nothing to do: enter a prefix/suffix or text "
-                                          "to remove, or tick an option.")
-            return
         if self.do_move.get() and not self._move_folder():
             messagebox.showwarning("Rename", "Enter a name for the new folder.")
             return
+        plan = self._plan()
+        if all(p["unchanged"] for p in plan):
+            messagebox.showinfo("Rename", "Nothing to do: add a rule (or tick an option) "
+                                          "that changes the names.")
+            return
         if not messagebox.askyesno("Confirm", f"Rename {len(selected)} item(s)?"):
             return
-        plan = self._plan()
         try:
             done = apply_plan(folder, plan, self._move_folder())
         except Exception as exc:
@@ -832,16 +825,22 @@ class RenamerApp:
         if not os.path.isdir(folder):
             messagebox.showwarning("Undo", "Please choose a folder first.")
             return
+        self._undo_and_report(undo_last, folder)
+
+    def _undo_and_report(self, undo_fn, arg, parent=None):
+        """Run undo_fn(arg), tell the user how it went, reload the list. True if it worked."""
         try:
-            count = undo_last(folder)
-        except FileNotFoundError:
-            messagebox.showinfo("Undo", "No earlier run to undo for this folder.")
-            return
+            count = undo_fn(arg)
+        except FileNotFoundError as exc:
+            messagebox.showinfo("Undo", str(exc), parent=parent)
+            return False
         except Exception as exc:
-            messagebox.showerror("Error", str(exc))
-            return
-        messagebox.showinfo("Undo", f"Restored {count} item(s).")
-        self.load_files()
+            messagebox.showerror("Error", str(exc), parent=parent)
+            return False
+        messagebox.showinfo("Undo", f"Restored {count} item(s).", parent=parent)
+        if os.path.isdir(self.folder.get().strip()):
+            self.load_files()
+        return True
 
     def clear_log(self):
         if not load_history():
@@ -934,15 +933,8 @@ class RenamerApp:
             if not messagebox.askyesno(
                     "Undo", f"Undo run #{e['id']} ({len(e['moves'])} item(s))?", parent=win):
                 return
-            try:
-                count = undo_run(e["id"])
-            except Exception as exc:
-                messagebox.showerror("Error", str(exc), parent=win)
-                return
-            messagebox.showinfo("Undo", f"Restored {count} item(s).", parent=win)
-            fill()
-            if os.path.isdir(self.folder.get().strip()):
-                self.load_files()
+            if self._undo_and_report(undo_run, e["id"], parent=win):
+                fill()
 
         tree.bind("<<TreeviewSelect>>", show_detail)
         btns = ttk.Frame(win)

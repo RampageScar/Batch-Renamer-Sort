@@ -1,166 +1,118 @@
-# File Management Utilities
+# File Organizer Tools
 
-A pair of lightweight Windows-friendly desktop tools built with **Python 3** and **Tkinter** to help organize files efficiently:
+A pair of lightweight Python desktop tools for managing files in batches:
 
-- **Batch File Renamer** — rename selected files or folders using rules, prefixes, suffixes, capitalization, and numbering.
+- **Batch File Renamer** — rename selected files or folders using rules, clean up names, or number items in a chosen order.
 - **Folder Sorter** — move files into folders based on words in their filenames.
 
-Both tools use Python's standard library and include run logs that support undoing previous operations.
+Both tools use a simple graphical interface built with Tkinter and keep a history log so you can review previous operations and undo a run.
 
-## Tools
+## Features
 
-### 1. Batch File Renamer (`renamer.py`)
+### Batch File Renamer (`renamer.py`)
 
-Rename multiple files or folders in one batch with a graphical interface.
-
-**Features**
-- Browse a folder and filter items using filename patterns such as `*.png` or `*.jpg`.
-- Choose to work with files, folders, or both.
-- Select individual items, select all, select none, or invert the selection.
-- Search the listed items and reorder them by dragging names in the list.
-- Remove or replace text in filenames:
-  - Anywhere
-  - At the start
-  - At the end
-  - As a whole word
-- Add multiple remove/replace rules and apply them in order.
-- Optionally remove dimension suffixes such as `_384x256`.
-- Add a prefix and/or suffix.
-- Replace spaces with underscores.
-- Capitalize the first letter of the name or the first letter of each word.
-- Number selected items in list order, with a configurable starting number and zero-padding.
+- Select a folder and filter the list by filename or extension, such as `*.png` or `*.jpg, *.png`.
+- Choose to work with **files**, **folders**, or **both**.
+- Preview current and proposed names before applying changes.
+- Add, remove, or replace text at the start, end, anywhere in the name, or as a whole word.
+- Enter multiple search terms in one rule, separated by commas.
+- Remove size suffixes such as `_384x256`.
+- Replace spaces with underscores and capitalise the first letter or every word.
+- Number selected items, with a configurable starting number and zero-padding.
+- Drag items to change their order before numbering them.
 - Optionally move renamed files into a new folder.
-- Preview the resulting names before applying changes.
-- Review the run log and undo a previous run.
+- Review the history log and undo a previous run.
 
-**Example**
+### Folder Sorter (`sorter.py`)
 
-A set of files such as:
-
-```text
-man_idle.png
-man_walk.png
-man_run.png
-```
-
-Can be numbered with the prefix `sprite` to produce names like:
-
-```text
-sprite_1.png
-sprite_2.png
-sprite_3.png
-```
-
-The actual numbering follows the displayed list order when the option to preserve the order is enabled; otherwise, items are numbered in natural order (for example, `file2` before `file10`).
-
-### 2. Folder Sorter (`sorter.py`)
-
-Sort loose files into folders based on words in their filenames. The tool moves files; it does not rename them.
-
-**Features**
-- Browse a folder and filter files with patterns such as `*.png` or `*.jpg`.
-- Define rules that map a filename word to a destination folder.
-- Use whole-word matching or match the word anywhere in the filename.
-- Apply rules in order: the first matching rule wins.
-- Automatically capitalize new folder names, with an option to turn this off.
-- Reuse existing destination folders, preserving their existing spelling.
-- Fill sorting rules from existing subfolders.
-- Optionally include files inside subfolders.
-- Choose whether to preserve each file's subfolder structure inside its destination folder or move it directly into the destination folder.
-- Preview destinations before moving files.
-- Leave files that match no rule in their current locations.
-- Automatically add a numeric suffix to avoid destination filename conflicts.
-- View the operation log and undo a previous sorting run.
-
-**Example**
-
-Given files such as:
-
-```text
-bandit_idle.png
-bandit_attack.png
-healer_idle.png
-```
-
-Rules can route filenames containing `bandit` to a `Bandit` folder and filenames containing `healer` to a `Healer` folder:
-
-```text
-Bandit/
-├── bandit_idle.png
-└── bandit_attack.png
-
-Healer/
-└── healer_idle.png
-```
-
-The folder names and matching behavior depend on the rules configured in the application.
+- Sort files into destination folders based on words in their filenames.
+- Define rules using a **word** and a **destination folder**; the first matching rule wins.
+- Match whole words (for example, `rat` matches `rat_walk.png` but not `pirate.png`) or match a word inside a longer name.
+- Automatically capitalise new folder names, or keep the entered spelling.
+- Fill rules from existing sub-folders to help organise files into those folders.
+- Filter the file list by filename or extension and select which files to sort.
+- Optionally include files inside sub-folders and choose whether to preserve their sub-folder structure.
+- Leave files that match no rule where they are.
+- Reuse existing destination folders and avoid overwriting files when a name already exists.
+- Review the history log and undo a previous run.
 
 ## Requirements
 
-- Windows or another environment where Python and Tkinter are available.
-- Python 3.
-- Tkinter, which is included with many standard Python installations.
-- No third-party Python packages are required.
+- Python 3
+- Tkinter, which is included with most standard Python installations
+- Windows, macOS, or Linux with a graphical desktop environment
 
-The tools use Windows-compatible file operations and should be run in an environment where the selected files and folders are accessible.
+No third-party Python packages are required.
 
 ## Getting Started
 
-1. Clone or download this repository.
-2. Place `renamer.py` and `sorter.py` in the same folder.
-3. Run the tool you want to use from a terminal.
-
-### Run the Batch File Renamer
+1. Download or clone this repository.
+2. Keep `renamer.py` and `sorter.py` in the same project folder.
+3. Open a terminal or Command Prompt in that folder.
+4. Run the tool you need:
 
 ```bash
 python renamer.py
 ```
 
-### Run the Folder Sorter
-
 ```bash
 python sorter.py
 ```
 
-## Logs and Undo
+On some systems, use `python3` instead of `python`. On Windows, you can also try `py renamer.py` or `py sorter.py`.
 
-Each tool maintains its own JSON log beside its Python script:
+## How to Use the Renamer
 
-- `renamer_log.json` — records rename/move runs made by `renamer.py`.
-- `sorter_log.json` — records file-sorting runs made by `sorter.py`.
+1. Launch `renamer.py`.
+2. Browse to the folder containing the items you want to rename.
+3. Choose whether to list files, folders, or both, and set a filter if needed.
+4. Tick the items you want to change.
+5. Add rename rules and choose any other options, such as replacing spaces or numbering.
+6. Check the **New name** column to review the proposed changes.
+7. Select **Rename selected** to apply them.
+8. Use **Undo last run** or the history log if you need to reverse a run.
 
-The logs are created as operations are recorded. Use each application's **Undo last run** option to reverse a logged operation when the required files are still available at the recorded paths.
+**Rule tip:** To add a prefix or suffix, choose **Start** or **End** and leave the **Find** field empty. For example, a Start rule with `sprite_` adds that text to the beginning of the name.
 
-Do not manually delete or edit a log if you still need its undo history.
+## How to Use the Sorter
 
-## Safe Usage Tips
+1. Launch `sorter.py`.
+2. Browse to the folder whose files you want to organise.
+3. Set the file filter and select the files to process.
+4. Add rules by entering a filename word and the destination folder name.
+5. Review the **Goes to** column to see where each selected file will go.
+6. If needed, enable **Include sub-folders** and choose how to handle their structure.
+7. Select **Sort selected** and confirm the move.
+8. Use **Undo last run** or the history log if you need to reverse a run.
 
-- **Test on a copy first**, especially when processing many files.
-- Review the previewed names or destinations before confirming an operation.
-- Check that the correct folder and file filter are selected.
-- Keep the JSON logs if you may need to undo a previous run.
-- Avoid modifying the same files manually between an operation and its undo, as changes to paths or name conflicts can affect restoration.
-- These tools perform real filesystem changes. Undo is based on the recorded operation history and is not a substitute for a backup.
+**Rule tip:** Rules run from top to bottom. Put more specific rules above broader rules when a filename could match more than one rule.
+
+## History Logs and Undo
+
+Each script creates its own JSON history log next to the script file:
+
+- Renamer: `renamer_log.json`
+- Sorter: `sorter_log.json`
+
+The log records completed changes and lets you inspect runs or undo a previous run from the application's **Log** menu. Keep the relevant log file if you want to preserve the ability to undo past operations. Clearing a log removes that recorded history, so the associated runs can no longer be undone through the tool.
+
+## Important Notes
+
+- Review the proposed names or destinations before applying an operation.
+- Consider testing with a copy of your files first, especially for large batches.
+- Files that match no sorting rule are left where they are.
+- If a destination name already exists, the tools add a suffix such as `_1` rather than intentionally overwriting the existing item.
+- The logs are stored beside the scripts, not inside the folders being processed.
 
 ## Project Structure
 
 ```text
-.
+file-organizer-tools/
+├── README.md
 ├── renamer.py
 ├── sorter.py
-├── renamer_log.json   # created when the renamer records operations
-└── sorter_log.json    # created when the sorter records operations
+├── renamer_log.json   # created when the renamer records a run
+└── sorter_log.json    # created when the sorter records a run
 ```
 
-The JSON log files are generated at runtime and do not need to be included in the repository.
-
-## Technology Stack
-
-- Python 3
-- Tkinter / ttk
-- Standard-library file and path operations
-- JSON for operation history
-
-## License
-
-No license has been specified. Add a `LICENSE` file if you intend to allow others to reuse, modify, or distribute this project.
+The two log files are generated when needed; you do not need to create them manually.
