@@ -1,4 +1,4 @@
-# File Management Utilities
+# Batch Rename & Sort
 
 A pair of lightweight Windows-friendly desktop tools built with **Python 3** and **Tkinter** to help organize files efficiently:
 
