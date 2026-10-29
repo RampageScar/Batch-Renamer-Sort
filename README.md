@@ -1,8 +1,4 @@
-<<<<<<< HEAD
 # File Organizer Tools
-=======
-# Batch Rename & Sort
->>>>>>> f5701851aa2bbba205005847e4356c9d4acc56e9
 
 A pair of lightweight Python desktop tools for managing files in batches:
 
