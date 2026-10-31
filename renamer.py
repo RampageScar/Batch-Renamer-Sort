@@ -3,8 +3,8 @@ Batch File Renamer
 ------------------
 Pick a folder, tick the files (or folders) you want, remove or replace words in the names
 (at the start, at the end, anywhere, or as a whole word), add text at the start or end
-(a Start/End rule with an empty Find box), or number them in order (1.png, 2.png ...
-or notes_1.png, notes_2.png ...), optionally move the renamed files into a new
+(a Start/End rule with an empty Find box), or number them in order (photo_1.png,
+1_photo.png or just 1.png, 2.png ...), optionally move the renamed files into a new
 folder, and undo runs from the log.  (To sort files into folders by word, use sorter.py.)
 
 Numbering follows the list from top to bottom. The list starts in natural order
@@ -115,12 +115,10 @@ def apply_rule(stem, where, find, replace):
       Whole word  : like Anywhere, but only when it is a separate word
                     (between _ - space or the ends of the name)
     An empty `replace` removes the text. With an empty `find`, Start puts
-    `replace` in front of the name and End puts it after (other modes do nothing).
+    `replace` in front of the name; every other mode puts it after.
     """
     if not find.strip():
-        if where == "Start":
-            return replace + stem
-        return stem + replace if where == "End" else stem
+        return replace + stem if where == "Start" else stem + replace
     low = stem.lower()
     for item in _split_list(find):
         if where == "Start":
@@ -157,6 +155,7 @@ def remove_parts(stem, rules=(), strip_size=False):
 
 
 CAPITALISE_CHOICES = ("Off", "First letter only", "Every word")
+NUMBER_POS_CHOICES = ("At the end", "At the start", "Replaces the name")
 _WORD_FIRST_LETTER = re.compile(r"(^|[ _\-])([^\W\d_])")   # a letter that starts a word
 
 
@@ -175,28 +174,37 @@ def apply_capitalise(text, mode="Off"):
 
 
 def build_name(filename, replace_spaces, rules=(), strip_size=False,
-               capitalise="Off", is_dir=False, number=None):
+               capitalise="Off", is_dir=False, number=None, number_pos="At the end"):
     """
     Return (new_name, removal_skipped).
-    Order: remove/replace words, then add text (rules with an empty Find box),
-    then replace spaces, then (optionally) capitalise: first letter only, or
-    every word. removal_skipped is True when the removal rules would leave an
-    empty name, in which case the original name is kept for that step.
-    If `number` (a string such as "7") is given, it replaces the whole name
-    (the removal rules and size removal are not used); add-text rules still
-    apply, e.g. a Start rule adding "notes_" + number "7" -> notes_7.png
+    Order: remove/replace words, then the number (if any), then add text (rules
+    with an empty Find box), then replace spaces, then (optionally) capitalise:
+    first letter only, or every word. removal_skipped is True when the removal
+    rules would leave an empty name, in which case the original name is kept
+    for that step.
+    If `number` (a string such as "7") is given, number_pos says where it goes:
+    "At the end" (photo_7), "At the start" (7_photo) or "Replaces the name" (7,
+    the removal rules and size removal are not used). Add-text rules still
+    apply, e.g. a Start rule adding "notes_" + "Replaces the name" -> notes_7.png
     """
     stem, ext = _split_name(filename, is_dir)
     removal_skipped = False
-    if number is not None:
+    if number is not None and number_pos == "Replaces the name":
         stem = number
     else:
         cut, changed = remove_parts(stem, rules, strip_size)
         if changed:
-            if cut:
+            if cut or number is not None:
                 stem = cut
             else:
                 removal_skipped = True
+        if number is not None:
+            if not stem:
+                stem = number                     # the rules removed everything
+            elif number_pos == "At the start":
+                stem = number + "_" + stem.lstrip(SEPARATORS)
+            else:
+                stem = stem.rstrip(SEPARATORS) + "_" + number
     for rule in rules:
         if is_add_rule(rule):
             stem = apply_rule(stem, *rule)
@@ -255,7 +263,8 @@ def _move_pairs(pairs, done):
 
 def plan_renames(folder, selected, replace_spaces, move_folder=None,
                  rules=(), strip_size=False, capitalise="Off",
-                 numbering=False, start=1, pad=0, keep_order=False):
+                 numbering=False, start=1, pad=0, keep_order=False,
+                 number_pos="At the end"):
     """
     Build the rename plan for the selected filenames.
     Returns a list of dicts: src, dst, name, is_dir, numbered (a clash number was
@@ -263,7 +272,8 @@ def plan_renames(folder, selected, replace_spaces, move_folder=None,
     Name clashes (with files on disk or within this batch) get _1, _2, ...
     With numbering=True the selected items are called start, start+1, ...
     (zero-padded to `pad` digits), in the order given if keep_order is True,
-    otherwise in natural order (file2 before file10).
+    otherwise in natural order (file2 before file10); number_pos is one of
+    NUMBER_POS_CHOICES.
     """
     target_dir = os.path.join(folder, move_folder) if move_folder else folder
     existing = set()    # names already in the target folder (lower-case)
@@ -285,7 +295,8 @@ def plan_renames(folder, selected, replace_spaces, move_folder=None,
             raise ValueError("Folders can't be moved into a new folder.")
         number = str(start + idx).zfill(pad) if numbering else None
         new_name, skipped = build_name(
-            fname, replace_spaces, rules, strip_size, capitalise, is_dir, number)
+            fname, replace_spaces, rules, strip_size, capitalise, is_dir, number,
+            number_pos)
         numbered = False
         # a file whose name doesn't change and stays in place is not a clash
         unchanged = (new_name == fname and not move_folder)
@@ -434,6 +445,7 @@ class RenamerApp:
         self.capitalise = tk.StringVar(value="Off")
         self.replace_spaces = tk.BooleanVar(value=True)
         self.numbering = tk.BooleanVar(value=False)
+        self.number_pos = tk.StringVar(value=NUMBER_POS_CHOICES[0])
         self.num_start = tk.StringVar(value="1")
         self.num_pad = tk.StringVar(value="0")
         self.do_move = tk.BooleanVar(value=False)
@@ -449,7 +461,7 @@ class RenamerApp:
         self._build_menu()
         self._build_ui()
         for var in (self.search, self.strip_size, self.capitalise, self.replace_spaces,
-                    self.numbering, self.num_start, self.num_pad,
+                    self.numbering, self.number_pos, self.num_start, self.num_pad,
                     self.do_move, self.move_name):
             var.trace_add("write", lambda *a: self._refresh())
         self.items.trace_add("write", lambda *a: self._on_items_change())
@@ -537,9 +549,9 @@ class RenamerApp:
         ttk.Checkbutton(rbar, text="Also remove a size at the end (like _384x256)",
                         variable=self.strip_size).pack(side="left", padx=16)
         ttk.Label(rem, text="Tips: put several options in one Find box separated by commas "
-                            "(man_, creature_).  To add text, leave Find empty and pick "
-                            "Start (prefix) or End (suffix); it is added after the "
-                            "removals and typed exactly as written (e.g. sprite_ or _final).",
+                            "(man_, creature_).  To add text, leave Find empty: Start adds it "
+                            "in front, any other choice adds it at the end; it is added after "
+                            "the removals and typed exactly as written (e.g. sprite_ or _final).",
                   wraplength=820, justify="left").pack(anchor="w", padx=8, pady=(0, 4))
 
         opts = ttk.LabelFrame(self.root, text="Rename options")
@@ -555,17 +567,20 @@ class RenamerApp:
                              "Every word: Standstill_Rat").pack(side="left")
         nrow = ttk.Frame(opts)
         nrow.pack(fill="x", padx=8, pady=2)
-        ttk.Checkbutton(nrow, text="Number the ticked items in list order "
-                                   "(replaces the name; add-text rules still apply)",
+        ttk.Checkbutton(nrow, text="Number the ticked items in list order",
                         variable=self.numbering).pack(side="left")
+        ttk.Label(nrow, text="  Number goes:").pack(side="left")
+        ttk.Combobox(nrow, textvariable=self.number_pos, values=NUMBER_POS_CHOICES,
+                     state="readonly", width=16).pack(side="left", padx=4)
         ttk.Label(nrow, text="  Start at:").pack(side="left")
         ttk.Spinbox(nrow, textvariable=self.num_start, from_=0, to=999999,
                     width=7).pack(side="left", padx=4)
         ttk.Label(nrow, text="Digits:").pack(side="left")
         ttk.Spinbox(nrow, textvariable=self.num_pad, from_=0, to=10,
                     width=4).pack(side="left", padx=4)
-        ttk.Label(opts, text="Example: Start rule adding notes_ -> notes_1.png, notes_2.png ...  "
-                             "No rule -> 1.png, 2.png ...  Digits 3 -> 001, 002 ...").pack(
+        ttk.Label(opts, text="Example: photo.png -> At the end: photo_1.png   "
+                             "At the start: 1_photo.png   Replaces the name: 1.png   "
+                             "Digits 3 -> 001, 002 ...").pack(
             anchor="w", padx=28)
         self.move_check = ttk.Checkbutton(opts, text="Move renamed files into a new folder "
                                                      "(files only)",
@@ -738,7 +753,7 @@ class RenamerApp:
             self.replace_spaces.get(), self._move_folder(),
             rules=self._rules(), strip_size=self.strip_size.get(),
             capitalise=self.capitalise.get(),
-            numbering=self.numbering.get(),
+            numbering=self.numbering.get(), number_pos=self.number_pos.get(),
             start=self._int(self.num_start, 1), pad=self._int(self.num_pad, 0),
             keep_order=True,          # numbers follow the list, top to bottom
         )
